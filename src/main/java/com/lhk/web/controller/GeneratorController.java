@@ -203,10 +203,53 @@ public class GeneratorController {
         long size = generatorQueryRequest.getPageSize();
         // 限制爬虫
         ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
         Page<Generator> generatorPage = generatorService.page(new Page<>(current, size),
                 generatorService.getQueryWrapper(generatorQueryRequest));
-        return ResultUtils.success(generatorService.getGeneratorVOPage(generatorPage, request));
+        stopWatch.stop();
+        System.out.println("查询生成器：" + stopWatch.getTotalTimeMillis());
+
+        stopWatch = new StopWatch();
+        stopWatch.start();
+        Page<GeneratorVO> generatorVOPage = generatorService.getGeneratorVOPage(generatorPage, request);
+        stopWatch.stop();
+        System.out.println("查询关联数据：" + stopWatch.getTotalTimeMillis());
+        return ResultUtils.success(generatorVOPage);
     }
+
+    /**
+     * 快速分页获取列表（封装类）
+     *
+     * @param generatorQueryRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/list/page/vo/fast")
+    public BaseResponse<Page<GeneratorVO>> listGeneratorVOByPageFast(@RequestBody GeneratorQueryRequest generatorQueryRequest,
+                                                                     HttpServletRequest request) {
+        long current = generatorQueryRequest.getCurrent();
+        long size = generatorQueryRequest.getPageSize();
+        // 限制爬虫
+        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
+        Page<Generator> generatorPage = generatorService.page(new Page<>(current, size),
+                generatorService.getQueryWrapper(generatorQueryRequest));
+        stopWatch.stop();
+        System.out.println("查询生成器：" + stopWatch.getTotalTimeMillis());
+        stopWatch = new StopWatch();
+        stopWatch.start();
+        Page<GeneratorVO> generatorVOPage = generatorService.getGeneratorVOPage(generatorPage, request);
+        stopWatch.stop();
+        System.out.println("查询关联数据：" + stopWatch.getTotalTimeMillis());
+        generatorVOPage.getRecords().forEach(generatorVO -> {
+            generatorVO.setFileConfig(null);
+            generatorVO.setModelConfig(null);
+        });
+        return ResultUtils.success(generatorVOPage);
+    }
+
 
     /**
      * 分页获取当前用户创建的资源列表
@@ -491,6 +534,7 @@ public class GeneratorController {
 
         // 需要登录
         User loginUser = userService.getLoginUser(request);
+        log.info("userId = {} 在线制作生成器", loginUser.getId());
 
         // 2）创建独立工作空间，下载压缩包到本地
         if (StrUtil.isBlank(zipFilePath)) {
@@ -510,7 +554,11 @@ public class GeneratorController {
         }
 
         try {
+            StopWatch stopWatch = new StopWatch();
+            stopWatch.start();
             cosManager.download(zipFilePath, localZipFilePath);
+            stopWatch.stop();
+            System.out.println("下载文件：" + stopWatch.getTotalTimeMillis());
         } catch (InterruptedException e) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "压缩包下载失败");
         }
@@ -527,7 +575,11 @@ public class GeneratorController {
         // 5）调用 maker 方法制作生成器
         GenerateTemplate generateTemplate = new ZipGenerator();
         try {
+            StopWatch stopWatch = new StopWatch();
+            stopWatch.start();
             generateTemplate.doGenerate(meta, outputPath);
+            stopWatch.stop();
+            System.out.println("制作：" + stopWatch.getTotalTimeMillis());
         } catch (Exception e) {
             e.printStackTrace();
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "制作失败");
