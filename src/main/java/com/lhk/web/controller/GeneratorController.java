@@ -1,5 +1,6 @@
 package com.lhk.web.controller;
 
+import cn.hutool.core.date.StopWatch;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.RandomUtil;
@@ -296,15 +297,31 @@ public class GeneratorController {
         // 追踪事件
         log.info("用户 {} 下载了 {}", loginUser, filepath);
 
+        // 设置响应头
+        response.setContentType("application/octet-stream;charset=UTF-8");
+        response.setHeader("Content-Disposition", "attachment; filename=" + filepath);
+
+        // 优先从缓存读取
+        String zipFilePath = getCacheFilePath(id, filepath);
+        if (FileUtil.exist(zipFilePath)) {
+            // 写入响应
+            Files.copy(Paths.get(zipFilePath), response.getOutputStream());
+            return;
+        }
+
         COSObjectInputStream cosObjectInput = null;
         try {
+            StopWatch stopWatch = new StopWatch();
+            stopWatch.start();
+
             COSObject cosObject = cosManager.getObject(filepath);
             cosObjectInput = cosObject.getObjectContent();
-            // 处理下载到的流
+            // 处理下载到的流，本质上是下载完整文件到服务器
             byte[] bytes = IOUtils.toByteArray(cosObjectInput);
-            // 设置响应头
-            response.setContentType("application/octet-stream;charset=UTF-8");
-            response.setHeader("Content-Disposition", "attachment; filename=" + filepath);
+
+            stopWatch.stop();
+            System.out.println(stopWatch.getTotalTimeMillis());
+
             // 写入响应
             response.getOutputStream().write(bytes);
             response.getOutputStream().flush();
@@ -509,5 +526,64 @@ public class GeneratorController {
             FileUtil.del(tempDirPath);
         });
     }
+
+    /**
+     * 缓存代码生成器
+     *
+     * @param generatorCacheRequest
+     * @param request
+     * @param response
+     */
+    @PostMapping("/cache")
+    @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    public void cacheGenerator(@RequestBody GeneratorCacheRequest generatorCacheRequest, HttpServletRequest request, HttpServletResponse response) {
+        if (generatorCacheRequest == null || generatorCacheRequest.getId() <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        // 获取生成器
+        long id = generatorCacheRequest.getId();
+        Generator generator = generatorService.getById(id);
+        if (generator == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+
+        String distPath = generator.getDistPath();
+        if (StrUtil.isBlank(distPath)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "产物包不存在");
+        }
+
+        // 缓存空间
+        String zipFilePath = getCacheFilePath(id, distPath);
+
+        // 新建文件
+        if (!FileUtil.exist(zipFilePath)) {
+            FileUtil.touch(zipFilePath);
+        }
+
+        // 下载生成器
+        try {
+            cosManager.download(distPath, zipFilePath);
+        } catch (InterruptedException e) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "压缩包下载失败");
+        }
+    }
+
+    /**
+     * 获取缓存文件路径
+     *
+     * @param id
+     * @param distPath
+     * @return
+     */
+    public String getCacheFilePath(long id, String distPath) {
+        String projectPath = System.getProperty("user.dir");
+        String tempDirPath = String.format("%s/.temp/cache/%s", projectPath, id);
+        String zipFilePath = String.format("%s/%s", tempDirPath, distPath);
+        return zipFilePath;
+    }
+
+
+
 
 }
