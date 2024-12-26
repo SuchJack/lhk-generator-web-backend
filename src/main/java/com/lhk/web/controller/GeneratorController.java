@@ -345,7 +345,7 @@ public class GeneratorController {
      */
     @PostMapping("/use")
     public void useGenerator(@RequestBody GeneratorUseRequest generatorUseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException {
-        // 获取用户输入的请求参数
+        // 1）获取用户输入的请求参数
         Long id = generatorUseRequest.getId();
         Map<String, Object> dataModel = generatorUseRequest.getDataModel();
 
@@ -358,7 +358,7 @@ public class GeneratorController {
             throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
         }
 
-        // 生成器的存储路径
+        // 2）从对象存储上下载生成器压缩包，到一个独立的工作空间
         String distPath = generator.getDistPath();
         if (StrUtil.isBlank(distPath)) {
             throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "产物包不存在");
@@ -375,21 +375,34 @@ public class GeneratorController {
             FileUtil.touch(zipFilePath);
         }
 
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
+        // 下载文件
         try {
             cosManager.download(distPath, zipFilePath);
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成器下载失败");
         }
+        stopWatch.stop();
+        System.out.println("下载：" + stopWatch.getTotalTimeMillis());
 
-        // 解压压缩包，得到脚本文件
+        // 3）解压压缩包，得到生成器
+        stopWatch = new StopWatch();
+        stopWatch.start();
         File unzipDistDir = ZipUtil.unzip(zipFilePath);
+        stopWatch.stop();
+        System.out.println("解压：" + stopWatch.getTotalTimeMillis());
 
-        // 将用户输入的参数写到 json 文件中
+        // 4）将用户输入的参数写到 json 文件中
+        stopWatch = new StopWatch();
+        stopWatch.start();
         String dataModelFilePath = tempDirPath + "/dataModel.json";
         String jsonStr = JSONUtil.toJsonStr(dataModel);
         FileUtil.writeUtf8String(jsonStr, dataModelFilePath);
+        stopWatch.stop();
+        System.out.println("写数据文件：" + stopWatch.getTotalTimeMillis());
 
-        // 执行脚本
+        // 5）执行脚本，构造脚本调用命令，传入模型参数 json 文件路径，调用脚本并生成代码
         // 找到脚本文件所在路径
         // 要注意，如果不是 windows 系统，找 generator 文件而不是 bat
         File scriptFile = FileUtil.loopFiles(unzipDistDir, 2, null)
@@ -418,6 +431,8 @@ public class GeneratorController {
         processBuilder.directory(scriptDir);
 
         try {
+            stopWatch = new StopWatch();
+            stopWatch.start();
             Process process = processBuilder.start();
 
             // 读取命令的输出
@@ -431,16 +446,25 @@ public class GeneratorController {
             // 等待命令执行完成
             int exitCode = process.waitFor();
             System.out.println("命令执行结束，退出码：" + exitCode);
+            stopWatch.stop();
+            System.out.println("执行脚本：" + stopWatch.getTotalTimeMillis());
         } catch (Exception e) {
             e.printStackTrace();
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "执行生成器脚本错误");
         }
 
+        // 6）返回生成的代码结果压缩包
         // 压缩得到的生成结果，返回给前端
+        // 生成代码的位置
+        stopWatch = new StopWatch();
+        stopWatch.start();
         String generatedPath = scriptDir.getAbsolutePath() + "/generated";
         String resultPath = tempDirPath + "/result.zip";
         File resultFile = ZipUtil.zip(generatedPath, resultPath);
+        stopWatch.stop();
+        System.out.println("压缩结果：" + stopWatch.getTotalTimeMillis());
 
+        // 下载文件
         // 设置响应头
         response.setContentType("application/octet-stream;charset=UTF-8");
         response.setHeader("Content-Disposition", "attachment; filename=" + resultFile.getName());
