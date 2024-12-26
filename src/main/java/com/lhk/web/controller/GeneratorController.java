@@ -245,13 +245,10 @@ public class GeneratorController {
         long size = generatorQueryRequest.getPageSize();
         String cacheKey = getPageCacheKey(generatorQueryRequest);
 
-        // 多级缓存
-        String cacheValue = cacheManager.get(cacheKey);
+        // 本地缓存
+        Object cacheValue = cacheManager.get(cacheKey);
         if (cacheValue != null) {
-            Page<GeneratorVO> generatorVOPage = JSONUtil.toBean(cacheValue,
-                    new TypeReference<Page<GeneratorVO>>() {
-                    },
-                    false);
+            Page<GeneratorVO> generatorVOPage = (Page<GeneratorVO>) cacheValue;
             return ResultUtils.success(generatorVOPage);
         }
 
@@ -263,7 +260,7 @@ public class GeneratorController {
         Page<GeneratorVO> generatorVOPage = generatorService.getGeneratorVOPage(generatorPage, request);
 
         // 写入多级缓存
-        cacheManager.put(cacheKey, JSONUtil.toJsonStr(generatorVOPage));
+        cacheManager.put(cacheKey, generatorVOPage);
         return ResultUtils.success(generatorVOPage);
     }
 

@@ -46,6 +46,9 @@ server:
     session:
       cookie:
         max-age: 2592000
+#  tomcat:
+#    threads:
+#      max: 1024
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: false
