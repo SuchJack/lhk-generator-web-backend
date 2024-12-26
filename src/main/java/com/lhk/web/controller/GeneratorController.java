@@ -1,12 +1,15 @@
 package com.lhk.web.controller;
 
+import cn.hutool.core.codec.Base64Encoder;
 import cn.hutool.core.date.StopWatch;
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.lang.TypeReference;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.core.util.ZipUtil;
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.lhk.maker.generator.main.GenerateTemplate;
 import com.lhk.maker.generator.main.ZipGenerator;
@@ -19,6 +22,7 @@ import com.lhk.web.common.ResultUtils;
 import com.lhk.web.constant.UserConstant;
 import com.lhk.web.exception.BusinessException;
 import com.lhk.web.exception.ThrowUtils;
+import com.lhk.web.manager.CacheManager;
 import com.lhk.web.manager.CosManager;
 import com.lhk.maker.meta.Meta;
 import com.lhk.web.model.dto.generator.*;
@@ -32,6 +36,8 @@ import com.qcloud.cos.model.COSObjectInputStream;
 import com.qcloud.cos.utils.IOUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
@@ -46,6 +52,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 帖子接口
@@ -66,6 +73,12 @@ public class GeneratorController {
 
     @Resource
     private CosManager cosManager;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private CacheManager cacheManager;
 
     // region 增删改查
 
@@ -230,23 +243,27 @@ public class GeneratorController {
                                                                      HttpServletRequest request) {
         long current = generatorQueryRequest.getCurrent();
         long size = generatorQueryRequest.getPageSize();
+        String cacheKey = getPageCacheKey(generatorQueryRequest);
+
+        // 多级缓存
+        String cacheValue = cacheManager.get(cacheKey);
+        if (cacheValue != null) {
+            Page<GeneratorVO> generatorVOPage = JSONUtil.toBean(cacheValue,
+                    new TypeReference<Page<GeneratorVO>>() {
+                    },
+                    false);
+            return ResultUtils.success(generatorVOPage);
+        }
+
         // 限制爬虫
         ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
-        StopWatch stopWatch = new StopWatch();
-        stopWatch.start();
-        Page<Generator> generatorPage = generatorService.page(new Page<>(current, size),
-                generatorService.getQueryWrapper(generatorQueryRequest));
-        stopWatch.stop();
-        System.out.println("查询生成器：" + stopWatch.getTotalTimeMillis());
-        stopWatch = new StopWatch();
-        stopWatch.start();
+        QueryWrapper<Generator> queryWrapper = generatorService.getQueryWrapper(generatorQueryRequest);
+        queryWrapper.select("id", "name", "description", "tags", "picture", "status", "userId", "createTime", "updateTime");
+        Page<Generator> generatorPage = generatorService.page(new Page<>(current, size), queryWrapper);
         Page<GeneratorVO> generatorVOPage = generatorService.getGeneratorVOPage(generatorPage, request);
-        stopWatch.stop();
-        System.out.println("查询关联数据：" + stopWatch.getTotalTimeMillis());
-        generatorVOPage.getRecords().forEach(generatorVO -> {
-            generatorVO.setFileConfig(null);
-            generatorVO.setModelConfig(null);
-        });
+
+        // 写入多级缓存
+        cacheManager.put(cacheKey, JSONUtil.toJsonStr(generatorVOPage));
         return ResultUtils.success(generatorVOPage);
     }
 
@@ -659,7 +676,16 @@ public class GeneratorController {
         return zipFilePath;
     }
 
-
-
+    /**
+     * 获取分页缓存 key
+     * @param generatorQueryRequest
+     * @return
+     */
+    private static String getPageCacheKey(GeneratorQueryRequest generatorQueryRequest) {
+        String jsonStr = JSONUtil.toJsonStr(generatorQueryRequest);
+        String base64 = Base64Encoder.encode(jsonStr);
+        String key = "generator:page:" + base64;
+        return key;
+    }
 
 }
