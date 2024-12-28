@@ -5,6 +5,7 @@ HELP.md
 .temp
 target/
 application-local.yml
+application-prod.yml
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
